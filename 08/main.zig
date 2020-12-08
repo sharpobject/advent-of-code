@@ -29,11 +29,11 @@ const Interpreter = struct {
         }
     };
 
-    initial_state: []Instruction,
-
     lines: []u8,
     instructions: []Instruction,
-    success: bool = false,
+    ipstack: []usize,
+    accstack: []i64,
+    ns: usize = 0,
 
     rip: usize = 0,
     accumulator: i64 = 0,
@@ -53,32 +53,30 @@ const Interpreter = struct {
             c.* = 0;
         }
 
-        const initial = try allocator.dupe(Instruction, instructions);
-
-        return Interpreter{
-            .initial_state = initial,
-            .lines = lines,
-            .instructions = instructions,
-        };
-    }
-
-    pub fn reload(self: *Interpreter) void {
-        for (self.lines) |*c| {
+        const ipstack = try allocator.alloc(usize, instructions.len);
+        for (ipstack) |*c| {
             c.* = 0;
         }
 
-        for (self.instructions) |*c, i| {
-            c.* = self.initial_state[i];
+        const accstack = try allocator.alloc(i64, instructions.len);
+        for (accstack) |*c| {
+            c.* = 0;
         }
+
+        return Interpreter{
+            .lines = lines,
+            .instructions = instructions,
+            .ipstack = ipstack,
+            .accstack = accstack,
+        };
     }
 
-    pub fn step(self: *Interpreter) bool {
-        if (self.lines[self.rip] > 0) return true;
-        if (self.rip + 1 == self.lines.len) {
-            self.success = true;
-            return true;
-        }
+    pub fn can_step(self: *Interpreter) bool {
+        return self.rip < self.instructions.len and
+            self.lines[self.rip] == 0;
+    }
 
+    pub fn step(self: *Interpreter) void {
         self.lines[self.rip] += 1;
 
         const inst = self.instructions[self.rip];
@@ -89,36 +87,44 @@ const Interpreter = struct {
                 self.rip += 1;
             },
             .jmp => {
-                self.rip = @intCast(usize, @intCast(isize, self.rip) + inst.arg1);
+                self.rip +%= @intCast(usize, inst.arg1);
             },
             .nop => {
                 self.rip += 1;
             },
         }
-
-        return false;
     }
 
-    pub fn swapJmpNop(self: *Interpreter, index: usize) bool {
-        const inst = self.instructions[index];
+    pub fn push(self: *Interpreter) void {
+        const inst = self.instructions[self.rip];
 
         switch (inst.opcode) {
+            .jmp, .nop => {
+                self.ipstack[self.ns] = self.rip;
+                self.accstack[self.ns] = self.accumulator;
+                self.ns += 1;
+            },
+            else => {}
+        }
+    }
+
+    pub fn pop(self: *Interpreter) void {
+        self.ns -= 1;
+        self.rip = self.ipstack[self.ns];
+        self.accumulator = self.accstack[self.ns];
+    }
+
+    pub fn swapJmpNop(self: *Interpreter) void {
+        const inst = self.instructions[self.rip];
+        switch (inst.opcode) {
             .nop => {
-                self.instructions[index] = .{
-                    .opcode = .jmp,
-                    .arg1 = inst.arg1,
-                };
+                self.instructions[self.rip].opcode = .jmp;
             },
             .jmp => {
-                self.instructions[index] = .{
-                    .opcode = .nop,
-                    .arg1 = inst.arg1,
-                };
+                self.instructions[self.rip].opcode = .nop;
             },
-            else => return false,
+            else => {}
         }
-
-        return true;
     }
 
     pub fn run(self: *Interpreter) bool {
@@ -148,24 +154,27 @@ pub fn main() !void {
     var total2: i64 = 0;
 
     var vm = try Interpreter.init(instructions);
-    _ = vm.run();
+    while (vm.can_step()) {
+        vm.push();
+        vm.step();
+    }
 
     total1 = vm.accumulator;
 
     Benchmark.read().print("Part 1");
     Benchmark.reset();
 
-    for (instructions) |_, i| {
-        vm.reload();
-
-        if (vm.swapJmpNop(i)) {
-            const finished = vm.run();
-
-            if (finished) {
-                total2 = vm.accumulator;
-            }
+    const winner: usize = vm.instructions.len;
+    while (vm.rip != winner) {
+        vm.pop();
+        vm.swapJmpNop();
+        vm.step();
+        while (vm.can_step()) {
+            vm.step();
         }
     }
+
+    total2 = vm.accumulator;
 
     Benchmark.read().print("Part 2");
     Benchmark.reset();
