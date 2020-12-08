@@ -126,14 +126,6 @@ const Interpreter = struct {
             else => {}
         }
     }
-
-    pub fn run(self: *Interpreter) bool {
-        while (true) {
-            if (self.step()) break;
-        }
-
-        return self.success;
-    }
 };
 
 pub fn main() !void {
